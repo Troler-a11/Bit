@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ZENITH | Live Terminal</title>
+    <title>ZENITH | Multi-Terminal</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
     <style>
-        :root { --bg: #050608; --accent: #00ff88; --border: rgba(0, 255, 136, 0.15); }
+        :root { --bg: #050608; --accent: #00ff88; --border: rgba(0, 255, 136, 0.2); }
         body { background: var(--bg); color: white; font-family: 'JetBrains Mono', monospace; margin: 0; padding-bottom: 50px; }
         
         .top-nav {
@@ -19,53 +19,43 @@
 
         .select-ui {
             background: #000; color: var(--accent); border: 1px solid var(--accent);
-            padding: 8px; border-radius: 5px; font-family: inherit;
+            padding: 8px; border-radius: 5px; font-family: inherit; cursor: pointer;
         }
 
-        .container { max-width: 1100px; margin: auto; padding: 30px 20px; }
+        .container { max-width: 1200px; margin: auto; padding: 30px 20px; }
         
         .market-grid {
-            display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px;
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px;
         }
 
         .card {
             background: rgba(255,255,255,0.02); border: 1px solid var(--border);
-            border-radius: 15px; padding: 20px; position: relative;
+            border-radius: 15px; padding: 20px; transition: 0.3s;
         }
+        .card:hover { background: rgba(0, 255, 136, 0.03); border-color: var(--accent); }
 
-        .price-text { font-size: 24px; font-weight: bold; margin: 10px 0; color: #fff; }
-        .change { font-size: 12px; }
+        .price-text { font-size: 26px; font-weight: bold; margin: 10px 0; letter-spacing: -1px; }
+        .symbol { color: #555; font-size: 12px; margin-bottom: 5px; display: block; }
         
-        canvas { max-height: 100px; margin-top: 15px; }
+        canvas { max-height: 80px; margin-top: 15px; pointer-events: none; }
 
-        .converter {
-            margin-top: 50px; background: rgba(0, 255, 136, 0.03);
-            border: 1px dashed var(--accent); border-radius: 20px; padding: 30px;
-            text-align: center;
-        }
-
-        input {
-            background: #000; border: 1px solid var(--border); color: white;
-            padding: 12px; border-radius: 8px; font-family: inherit; width: 150px; text-align: center;
-        }
-
-        .pulse-dot {
+        .pulse {
             width: 8px; height: 8px; background: var(--accent); border-radius: 50%;
             display: inline-block; margin-right: 10px; box-shadow: 0 0 10px var(--accent);
             animation: blink 1s infinite;
         }
-        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.2; } }
     </style>
 </head>
 <body>
 
     <div class="top-nav">
-        <div style="font-weight:bold; letter-spacing:2px;">ZENITH<span>.SYSTEM</span></div>
+        <div style="font-weight:bold; letter-spacing:2px; font-size:20px;">ZENITH<span>.OS</span></div>
         <div>
-            <span style="font-size:10px; color:#666;">CURRENCY:</span>
-            <select id="baseCurr" class="select-ui" onchange="resetAll()">
-                <option value="usd">USD $</option>
+            <span style="font-size:10px; color:#666; margin-right:10px;">ГОЛОВНА ВАЛЮТА:</span>
+            <select id="baseCurr" class="select-ui" onchange="resetAndRefresh()">
                 <option value="uah">UAH ₴</option>
+                <option value="usd">USD $</option>
                 <option value="eur">EUR €</option>
                 <option value="rub">RUB ₽</option>
             </select>
@@ -74,48 +64,47 @@
 
     <div class="container">
         <div style="margin-bottom:30px;">
-            <div class="pulse-dot"></div>
-            <span style="font-size:11px; color:var(--accent);">REAL-TIME DATA FEED (3s)</span>
+            <div class="pulse"></div>
+            <span style="font-size:11px; color:var(--accent);">LIVE DATA STREAM / UPDATE: 3S</span>
         </div>
 
         <div class="market-grid" id="grid">
             </div>
-
-        <div class="converter">
-            <h3>⚡ QUICK CONVERTER</h3>
-            <div style="display:flex; justify-content:center; align-items:center; gap:15px; flex-wrap:wrap;">
-                <input type="number" id="convAmount" value="1000" oninput="convert()">
-                <span id="convLabel">UAH</span>
-                <span>➜</span>
-                <div id="convResult" style="font-weight:bold; color:var(--accent);">0.00 BTC</div>
-            </div>
-        </div>
     </div>
 
     <script>
-        const coins = ['bitcoin', 'ethereum', 'solana', 'dogecoin'];
+        // Список активів: Крипта + Фіат (через крос-курси)
+        const assets = [
+            {id: 'bitcoin', name: 'BITCOIN', type: 'crypto'},
+            {id: 'ethereum', name: 'ETHEREUM', type: 'crypto'},
+            {id: 'usd', name: 'US DOLLAR', type: 'fiat'},
+            {id: 'eur', name: 'EURO', type: 'fiat'},
+            {id: 'rub', name: 'RUS RUBLE', type: 'fiat'},
+            {id: 'uah', name: 'UKR HRYVNIA', type: 'fiat'}
+        ];
+
         const charts = {};
         let currentPrices = {};
 
         function initCards() {
             const grid = document.getElementById('grid');
-            grid.innerHTML = coins.map(id => `
+            const base = document.getElementById('baseCurr').value;
+            
+            grid.innerHTML = assets.filter(a => a.id !== base).map(a => `
                 <div class="card">
-                    <div style="display:flex; justify-content:space-between;">
-                        <span style="color:#888; font-size:12px;">${id.toUpperCase()}</span>
-                        <span id="chg-${id}" class="change">0.00%</span>
-                    </div>
-                    <div id="prc-${id}" class="price-text">0.00</div>
-                    <canvas id="chart-${id}"></canvas>
+                    <span class="symbol">${a.name} / ${base.toUpperCase()}</span>
+                    <div id="prc-${a.id}" class="price-text">0.00</div>
+                    <canvas id="chart-${a.id}"></canvas>
                 </div>
             `).join('');
 
-            coins.forEach(id => {
-                const ctx = document.getElementById(`chart-${id}`).getContext('2d');
-                charts[id] = new Chart(ctx, {
+            assets.filter(a => a.id !== base).forEach(a => {
+                const ctx = document.getElementById(`chart-${a.id}`).getContext('2d');
+                charts[a.id] = new Chart(ctx, {
                     type: 'line',
-                    data: { labels: Array(20).fill(''), datasets: [{ 
-                        data: [], borderColor: '#00ff88', borderWidth: 2, tension: 0.4, pointRadius: 0 
+                    data: { labels: Array(15).fill(''), datasets: [{ 
+                        data: [], borderColor: '#00ff88', borderWidth: 1.5, tension: 0.3, pointRadius: 0, fill: true,
+                        backgroundColor: 'rgba(0, 255, 136, 0.05)'
                     }]},
                     options: { plugins: { legend: { display: false } }, scales: { x: { display: false }, y: { display: false } } }
                 });
@@ -125,46 +114,51 @@
         async function update() {
             const base = document.getElementById('baseCurr').value;
             try {
-                const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${coins.join(',')}&vs_currencies=${base}&include_24hr_change=true`);
+                // Отримуємо крипту і валюти (через API CoinGecko, воно вміє в крос-курси)
+                const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,tether,binancecoin&vs_currencies=usd,eur,uah,rub`);
                 const data = await res.json();
+                
+                // Отримуємо фіатні курси через стейблкоїн (Tether) як міст
+                const fiatBridge = data['tether']; 
 
-                coins.forEach(id => {
-                    const price = data[id][base];
-                    const change = data[id][`${base}_24hr_change`];
+                assets.forEach(a => {
+                    if(a.id === base) return;
                     
-                    currentPrices[id] = price;
-                    
-                    // Оновлюємо текст (до копійок)
-                    document.getElementById(`prc-${id}`).innerText = price.toLocaleString(undefined, {minimumFractionDigits: 2});
-                    const chgEl = document.getElementById(`chg-${id}`);
-                    chgEl.innerText = (change >= 0 ? '+' : '') + change.toFixed(2) + '%';
-                    chgEl.style.color = change >= 0 ? '#00ff88' : '#ff4444';
+                    let price;
+                    if(a.type === 'crypto') {
+                        price = data[a.id][base];
+                    } else {
+                        // Рахуємо курс валюти відносно бази через USDT міст
+                        price = fiatBridge[base] / fiatBridge[a.id];
+                    }
 
-                    // Оновлюємо графік
-                    const chart = charts[id];
-                    chart.data.datasets[0].data.push(price);
-                    if(chart.data.datasets[0].data.length > 20) chart.data.datasets[0].data.shift();
-                    chart.update('none');
+                    // Вивід на екран
+                    const el = document.getElementById(`prc-${a.id}`);
+                    if(el) {
+                        el.innerText = price.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 4});
+                        
+                        // Оновлюємо графік
+                        const chart = charts[a.id];
+                        if(chart) {
+                            chart.data.datasets[0].data.push(price);
+                            if(chart.data.datasets[0].data.length > 15) chart.data.datasets[0].data.shift();
+                            chart.update('none');
+                        }
+                    }
                 });
-                convert();
-            } catch(e) { console.log("API limit"); }
+            } catch(e) { console.log("Стримування API..."); }
         }
 
-        function convert() {
-            const amt = document.getElementById('convAmount').value;
-            const btcPrice = currentPrices['bitcoin'] || 1;
-            document.getElementById('convResult').innerText = (amt / btcPrice).toFixed(6) + " BTC";
-            document.getElementById('convLabel').innerText = document.getElementById('baseCurr').value.toUpperCase();
-        }
-
-        function resetAll() {
-            Object.values(charts).forEach(c => { c.data.datasets[0].data = []; c.update(); });
+        function resetAndRefresh() {
+            // Очищуємо все при зміні валюти
+            initCards();
             update();
         }
 
+        // Запуск
         initCards();
         update();
-        setInterval(update, 3000); // Оновлення кожні 3 секунди
+        setInterval(update, 3000);
     </script>
 </body>
 </html>
